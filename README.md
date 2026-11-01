@@ -1,20 +1,32 @@
-# Halloween Jam III
+# Bite & Bounce
 
-Jeu web (Phaser 4 + Vite) pour la Halloween Jam, déployé sur GitHub Pages.
+One-button vampire runner for **Goedware Halloween Jam III** - theme *"It only comes out at night"*.
+Phaser 4 + Vite, 100% web, mobile-friendly (landscape).
 
-**Lien jouable :** https://squidhell.github.io/HalloweenJamIII/
+**Play:** https://squidhell.github.io/HalloweenJamIII/
+
+## How to play
+- **Tap / click / Space** = hop. **Hold** = jump higher. Hold on landing = higher bounce.
+- The sun is rising: you burn in the light, you heal in the shade (dark columns).
+- **Land on villagers** to bite them: refills blood, bounces you, chains combos in the air.
+- Avoid the garlic. Collect blood orbs. Score = distance + bites x chain.
 
 ## Dev
-
 ```bash
 npm install
 npm run dev      # http://localhost:5173
-npm run build    # génère dist/
+npm run build    # outputs dist/
 ```
+Add `?debug` to the URL to expose the scene as `window.__bb` in the console.
 
-Les assets statiques vont dans `public/assets/` et se chargent avec `assets/...`.
+## Structure
+- `src/scenes/Game.js` - the whole game (title, run, death) - squares and circles only
+- `src/fx.js` - particle pool - `src/audio.js` - procedural WebAudio sfx + music (no assets)
+- `src/font.js` - loads the Waelek font from `public/fonts/` (falls back to a system font if missing)
 
-## Déploiement
+## Font
+Drop `waelek.ttf` (or `.otf` / `.woff2` / `.woff`) in `public/fonts/`. Source: https://www.fontspace.com/waelek-font-f145813 (free, non-commercial).
 
-Chaque push sur `main` déclenche `.github/workflows/deploy.yml` (build + publication Pages).
-Réglage unique : *Settings → Pages → Source : GitHub Actions*.
+## Deploy
+Every push to `main` runs `.github/workflows/deploy.yml` (build + GitHub Pages).
+One-time setting: *Settings -> Pages -> Source: GitHub Actions*.

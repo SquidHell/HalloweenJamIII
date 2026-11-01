@@ -1,25 +1,34 @@
 import Phaser from 'phaser';
-import { Boot } from './scenes/Boot.js';
-import { Menu } from './scenes/Menu.js';
 import { Game } from './scenes/Game.js';
+import { W, H } from './config.js';
+import { loadFont } from './font.js';
 
-export const GAME_WIDTH = 960;
-export const GAME_HEIGHT = 540;
+async function start() {
+  await loadFont(); // police Waelek (public/fonts/) — tolère l'absence du fichier
 
-new Phaser.Game({
-  type: Phaser.AUTO,
-  parent: 'game',
-  width: GAME_WIDTH,
-  height: GAME_HEIGHT,
-  backgroundColor: '#0b0614',
-  pixelArt: true,
-  scale: {
-    mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH
-  },
-  physics: {
-    default: 'arcade',
-    arcade: { gravity: { y: 0 }, debug: false }
-  },
-  scene: [Boot, Menu, Game]
-});
+  const game = new Phaser.Game({
+    type: Phaser.AUTO,
+    parent: 'game',
+    width: W,
+    height: H,
+    backgroundColor: '#0b0614',
+    disableContextMenu: true,
+    render: { antialias: true, roundPixels: false },
+    input: { activePointers: 3 },
+    scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+    scene: [Game]
+  });
+
+  // Mobile en portrait : message "tournez le téléphone" + jeu en pause.
+  const mq = window.matchMedia('(orientation: portrait) and (pointer: coarse)');
+  const apply = () => {
+    document.body.classList.toggle('portrait', mq.matches);
+    try { mq.matches ? game.pause() : game.resume(); } catch (e) { /* jeu pas encore prêt */ }
+  };
+  mq.addEventListener('change', apply);
+  game.events.once('ready', apply);
+
+  window.__game = game;
+}
+
+start();

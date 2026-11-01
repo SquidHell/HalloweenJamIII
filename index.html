@@ -1,19 +1,41 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#0b0614" />
-    <title>Halloween Jam III</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎃</text></svg>" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description" content="Bite & Bounce - a one-button vampire runner. Hop from shadow to shadow before the sun rises! Goedware Halloween Jam III." />
+    <title>Bite &amp; Bounce</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect x='20' y='20' width='60' height='60' fill='%2320123b'/><rect x='30' y='38' width='40' height='24' fill='%23e9e3f5'/><rect x='38' y='60' width='6' height='12' fill='white'/><rect x='56' y='60' width='6' height='12' fill='white'/></svg>" />
     <style>
-      html, body { margin: 0; height: 100%; background: #0b0614; overflow: hidden; }
-      #game { width: 100%; height: 100%; }
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html, body {
+        margin: 0; width: 100%; height: 100%; background: #0b0614; overflow: hidden;
+        overscroll-behavior: none; touch-action: none;
+        -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+      }
+      #game {
+        position: fixed; inset: 0;
+        width: 100vw; height: 100vh; height: 100dvh;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      }
       canvas { display: block; touch-action: none; }
+      #rotate {
+        display: none; position: fixed; inset: 0; z-index: 10; background: #0b0614; color: #fff;
+        flex-direction: column; align-items: center; justify-content: center; text-align: center;
+        font-family: Waelek, 'Trebuchet MS', Arial, sans-serif; font-size: 26px; padding: 24px; gap: 24px;
+      }
+      #rotate .phone { width: 64px; height: 108px; border: 6px solid #ff5c7a; border-radius: 4px; animation: tilt 2s ease-in-out infinite; }
+      @keyframes tilt { 0%, 30% { transform: rotate(0deg); } 60%, 100% { transform: rotate(-90deg); } }
+      body.portrait #rotate { display: flex; }
     </style>
   </head>
   <body>
     <div id="game"></div>
+    <div id="rotate"><div class="phone"></div><div>Turn your phone<br />to landscape</div></div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
