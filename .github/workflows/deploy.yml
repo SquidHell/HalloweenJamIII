@@ -2,7 +2,9 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    # La branche par défaut du dépôt est ccr-cfbd8ff4-w4owe8 : l'environnement github-pages
+    # n'autorise le déploiement que depuis elle tant que la branche par défaut n'est pas main.
+    branches: [main, ccr-cfbd8ff4-w4owe8]
   workflow_dispatch:
 
 permissions:
@@ -12,7 +14,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
