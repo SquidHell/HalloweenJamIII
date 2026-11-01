@@ -11,11 +11,15 @@ import Phaser from 'phaser';
 // ---- Palette (à changer en un seul endroit)
 export const COLORS = {
   skyNight: 0x1b1b2f,
-  skyDawn: 0x9c5a3c,
+  skyDay: 0xf0a24d,
+  moon: 0xdfe6ff,
+  sun: 0xfff0a8,
   ground: 0x3d3d52,
-  groundDawn: 0x6b5446,
+  groundDay: 0xc8a165,
   groundLine: 0x8888a8,
-  shade: 0x000000,        // colonne d'ombre (alpha 0.5)
+  groundLineDay: 0xefd9a0,
+  shelterTop: 0x4cc9f0,   // surface sûre (cyan = "ici on est à l'ombre")
+  shelter: 0x1d3557,
   player: 0x9b5de5,
   playerBurn: 0xff7a1a,
   villager: 0xf4a261,
@@ -25,7 +29,7 @@ export const COLORS = {
   fxBlood: 0xe63946,
   fxSmoke: 0x888888,
   fxEmber: 0xff7a1a,
-  fxHeal: 0x7fd6ff,
+  fxHeal: 0x4cc9f0,
   fxDust: 0x8888a8,
   burnOverlay: 0xff3b1f,
 };
@@ -66,23 +70,29 @@ export function dot(scene, x, y, r, color = 0xffffff, alpha = 1) {
 }
 
 // ---------------------------------------------------------------------------
-//  Décor : ciel plat (change de couleur avec l'aube) + sol + traits de défilement
+//  Décor : ciel plat + astre (lune la nuit / soleil le jour) + sol + traits.
+//  D = "dayness" 0 (nuit) .. 1 (plein jour), calculé par Game.js.
 // ---------------------------------------------------------------------------
 export function createBackground(scene) {
   const sky = box(scene, W / 2, H / 2, W + 200, H + 200, COLORS.skyNight).setDepth(0);
+  const star = dot(scene, W - 170, 120, 36, COLORS.moon).setDepth(1);
   const ground = box(scene, W / 2, GROUND + (H - GROUND) / 2 + 40, W + 200, H - GROUND + 80, COLORS.ground).setDepth(7);
   const line = box(scene, W / 2, GROUND + 2, W + 200, 4, COLORS.groundLine).setDepth(7.5);
   const dashes = [];
   for (let i = 0; i < 9; i++) dashes.push(box(scene, i * 160, GROUND + 50, 70, 5, COLORS.groundLine, 0.6).setDepth(7.5));
 
   return {
-    // I = intensité de l'aube (0..1), speed = vitesse du monde (px/s)
-    update(I, speed, dt) {
-      const c = lerpColor(COLORS.skyNight, COLORS.skyDawn, I);
+    update(D, speed, dt) {
+      const c = lerpColor(COLORS.skyNight, COLORS.skyDay, D);
       sky.setFillStyle(c);
       scene.cameras.main.setBackgroundColor(c);
-      ground.setFillStyle(lerpColor(COLORS.ground, COLORS.groundDawn, I));
-      for (const d of dashes) { d.x -= speed * dt; if (d.x < -90) d.x += 1440; }
+      // astre : lune -> soleil (plus grand, plus lumineux)
+      const r = 36 + 30 * D;
+      star.setFillStyle(lerpColor(COLORS.moon, COLORS.sun, D)).setDisplaySize(r * 2, r * 2);
+      ground.setFillStyle(lerpColor(COLORS.ground, COLORS.groundDay, D));
+      const lc = lerpColor(COLORS.groundLine, COLORS.groundLineDay, D);
+      line.setFillStyle(lc);
+      for (const d of dashes) { d.x -= speed * dt; if (d.x < -90) d.x += 1440; d.setFillStyle(lc); }
     },
   };
 }
@@ -126,10 +136,12 @@ export function createOrb(scene) {
 }
 
 // ---------------------------------------------------------------------------
-//  Zone d'ombre (safe) : un rectangle sombre de la largeur w, toute la hauteur.
-//  Origine du conteneur = coin haut-gauche de la zone.
+//  Plateforme d'ombre (abri du jour) : une barre sombre avec un dessus cyan.
+//  Origine du conteneur = coin haut-gauche (le dessus = surface où l'on se tient).
+//  Hitbox : largeur w, le dessus à y = 0.
 // ---------------------------------------------------------------------------
-export function createShade(scene, w) {
-  const col = box(scene, w / 2, H / 2, w, H, COLORS.shade, 0.5);
-  return scene.add.container(0, 0, [col]).setDepth(9);
+export function createShelter(scene, w) {
+  const top = box(scene, w / 2, 6, w, 12, COLORS.shelterTop);
+  const body = box(scene, w / 2, 12 + 14, w, 28, COLORS.shelter);
+  return scene.add.container(0, 0, [body, top]).setDepth(9);
 }

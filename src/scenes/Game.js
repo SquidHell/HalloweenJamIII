@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { W, H, GROUND, PX, FONT, clamp, lerp, rand, pick, lerpColor } from '../config.js';
 import { Fx } from '../fx.js';
 import { sfx } from '../audio.js';
+import { Cycle, DAWN_WARN } from '../cycle.js';
 import * as Art from '../art.js';
 const { COLORS, DIMS } = Art;
 
@@ -13,8 +14,11 @@ const CUT = 0.4;              // relâcher tôt = petit saut
 const BOUNCE_V = 690;         // rebond sur villageois (sans maintenir)
 const BOUNCE_HOLD_V = 880;    // rebond en maintenant
 const BUFFER = 0.13;          // buffer d'input
+const COYOTE = 0.1;           // saut toléré juste après avoir quitté une plateforme
 const MAX_BLOOD = 100;
+const HEAL_RATE = 9;          // sang/s récupéré sur une plateforme d'ombre
 const BEST_KEY = 'bb_best';
+const HALF_W = 22;            // demi-largeur de support du vampire
 
 function loadBest() { try { return +localStorage.getItem(BEST_KEY) || 0; } catch (e) { return 0; } }
 function saveBest(v) { try { localStorage.setItem(BEST_KEY, String(v)); } catch (e) { /* ignore */ } }
@@ -31,7 +35,9 @@ export class Game extends Phaser.Scene {
     this.held = false;
     this.downIds = new Set();
     this.state = 'title';
-    this.entities = { shades: [], villagers: [], garlics: [], orbs: [] };
+    this.D = 0;
+    this.cycle = new Cycle();
+    this.entities = { shelters: [], villagers: [], garlics: [], orbs: [] };
 
     this.cameras.main.setBackgroundColor(COLORS.skyNight);
     Art.initShapes(this);
@@ -59,7 +65,6 @@ export class Game extends Phaser.Scene {
     }).setOrigin(o.ox ?? 0.5, o.oy ?? 0.5).setDepth(o.depth ?? 40);
   }
 
-
   // --- formes (voir art.js)
   box(x, y, w, h, color, alpha) { return Art.box(this, x, y, w, h, color, alpha); }
   dot(x, y, r, color, alpha) { return Art.dot(this, x, y, r, color, alpha); }
@@ -67,7 +72,6 @@ export class Game extends Phaser.Scene {
   // ---------------------------------------------------------------- décor
   buildBackground() {
     this.bg = Art.createBackground(this);
-    // voile rouge de brûlure (feedback)
     this.burnOverlay = this.box(W / 2, H / 2, W + 200, H + 200, COLORS.burnOverlay, 0).setDepth(30);
   }
 
@@ -75,35 +79,49 @@ export class Game extends Phaser.Scene {
   buildPlayer() {
     this.plArt = Art.createPlayer(this);
     this.pl = this.plArt.c.setPosition(PX, GROUND);
-    this.P = { y: GROUND, prevY: GROUND, vy: 0, grounded: true, sx: 1, sy: 1, inv: 0, canCut: false };
+    this.P = { y: GROUND, prevY: GROUND, vy: 0, grounded: true, plat: null, sx: 1, sy: 1, inv: 0, canCut: false };
   }
 
   // ---------------------------------------------------------------- HUD
   buildHud() {
     const d = 40;
     this.hud = [];
+    // sang (haut gauche)
     const barX = 44, barY = 58, barW = 380;
     this.barW = barW;
     this.barBorder = this.box(barX - 5, barY, barW + 10, 36, 0xffffff, 0.85).setOrigin(0, 0.5).setDepth(d - 1);
     this.barBg = this.box(barX - 2, barY, barW + 4, 30, 0x120a22, 0.9).setOrigin(0, 0.5).setDepth(d);
     this.barFill = this.box(barX, barY, barW, 24, 0xd1203b).setOrigin(0, 0.5).setDepth(d + 1);
     this.barLabel = this.txt(barX, barY - 34, 'BLOOD', 22, '#ff8fa3', { ox: 0 });
+    // phase (haut centre) : nom + temps restant avant le changement
+    const pw = 330, px = W / 2 - pw / 2, py = 66;
+    this.phW = pw;
+    this.phLabel = this.txt(W / 2, 30, 'NIGHT 1', 38, '#9fb3ff');
+    this.phBorder = this.box(px - 4, py, pw + 8, 24, 0xffffff, 0.85).setOrigin(0, 0.5).setDepth(d - 1);
+    this.phBg = this.box(px - 2, py, pw + 4, 20, 0x120a22, 0.9).setOrigin(0, 0.5).setDepth(d);
+    this.phFill = this.box(px, py, pw, 14, 0x6c8cff).setOrigin(0, 0.5).setDepth(d + 1);
+    this.phX = px;
+    // score (haut droite)
     this.scoreText = this.txt(W - 44, 40, '0', 56, '#ffffff', { ox: 1 });
     this.bestText = this.txt(W - 44, 88, '', 22, '#cccccc', { ox: 1 });
-    this.chainText = this.txt(W / 2, 100, '', 54, '#ffd166').setVisible(false);
-    this.hintText = this.txt(W / 2, 200, '', 30, '#ffffff').setVisible(false);
-    this.hud.push(this.barBorder, this.barBg, this.barFill, this.barLabel, this.scoreText, this.bestText, this.chainText, this.hintText);
+    // annonces
+    this.chainText = this.txt(W / 2, 150, '', 54, '#ffd166').setVisible(false);
+    this.hintText = this.txt(W / 2, 560, '', 30, '#ffffff').setVisible(false);
+    this.banner = this.txt(W / 2, 260, '', 84, '#ffffff', { depth: 42, style: { strokeThickness: 10 } }).setVisible(false);
+    this.bannerSub = this.txt(W / 2, 335, '', 32, '#ffffff', { depth: 42 }).setVisible(false);
+    this.hud.push(this.barBorder, this.barBg, this.barFill, this.barLabel, this.phLabel, this.phBorder, this.phBg, this.phFill,
+      this.scoreText, this.bestText, this.chainText, this.hintText, this.banner, this.bannerSub);
   }
 
   buildTitle() {
     const d = 45;
     this.titleGroup = [];
-    const t1 = this.txt(W / 2, 220, 'BITE & BOUNCE', 96, '#ffffff', { depth: d });
-    const sub = this.txt(W / 2, 340, 'The sun is rising. Hop from shadow to shadow.\nLand on villagers to bite and bounce!', 28, '#dddddd', { depth: d });
-    this.startText = this.txt(W / 2, 490, 'TAP  /  SPACE  TO  START', 40, '#ffffff', { depth: d });
+    const t1 = this.txt(W / 2, 200, 'BITE & BOUNCE', 96, '#ffffff', { depth: d });
+    const sub = this.txt(W / 2, 330, 'NIGHT: you come out. Land on villagers to bite and bounce!\nDAWN: hide. Hop onto the blue shadow platforms!', 28, '#dddddd', { depth: d });
+    this.startText = this.txt(W / 2, 480, 'TAP  /  SPACE  TO  START', 40, '#ffffff', { depth: d });
     this.tweens.add({ targets: this.startText, alpha: 0.25, duration: 520, yoyo: true, repeat: -1 });
-    this.howText = this.txt(W / 2, 545, 'TAP = HOP     HOLD = HIGHER     STAY IN THE SHADE', 22, '#ffffff', { depth: d });
-    this.titleBest = this.txt(W / 2, 660, '', 24, '#cccccc', { depth: d });
+    this.howText = this.txt(W / 2, 540, 'TAP = HOP     HOLD = JUMP HIGHER', 24, '#ffffff', { depth: d });
+    this.titleBest = this.txt(W / 2, 650, '', 24, '#cccccc', { depth: d });
     this.jamText = this.txt(W / 2, 698, 'Goedware Halloween Jam III  -  "It only comes out at night"', 16, '#999999', { depth: d, style: { strokeThickness: 3 } });
     this.soundBtn = this.txt(W - 30, H - 30, '', 22, '#ffffff', { depth: d, ox: 1, oy: 1 });
     this.soundBtn.setPadding(14, 10).setInteractive({ useHandCursor: true });
@@ -180,6 +198,8 @@ export class Game extends Phaser.Scene {
     this.hud.forEach((o) => { if (title) o.setVisible(false); });
     this.chainText.setVisible(false);
     this.hintText.setVisible(false);
+    this.banner.setVisible(false);
+    this.bannerSub.setVisible(false);
     this.pl.setVisible(s !== 'dead');
     this.titleBest.setText(this.best ? `BEST  ${this.best}` : '');
     if (dead) this.deadT = 0;
@@ -191,18 +211,21 @@ export class Game extends Phaser.Scene {
       this.entities[k].length = 0;
     }
     this.fx.clear();
-    this.t = 0; this.I = 0.1; this.speed = 140;
+    this.cycle.reset();
+    this.t = 0; this.speed = 400; this.D = 0; this.n = 1;
+    this.phase = 'night'; this.prevPhase = null; this.seg = this.cycle.at(0);
+    this.days = 0;
     this.blood = MAX_BLOOD; this.bonus = 0; this.dist = 0;
-    this.chain = 0; this.maxChain = 0; this.bites = 0; this.bestChain = 0;
-    this.buffer = 0; this.smokeT = 0; this.trailT = 0; this.dustT = 0; this.hurtFlash = 0;
+    this.chain = 0; this.maxChain = 0; this.bites = 0;
+    this.buffer = 0; this.coyote = 0; this.smokeT = 0; this.trailT = 0; this.dustT = 0; this.hurtFlash = 0;
+    this.bannerT = 0; this.hintT = 0; this.burning = false; this.onShelter = false;
     this.timeScale = 1; this.hitstop = 0; this.deadT = 0;
+    this.lastTop = GROUND - 130;
     const P = this.P;
-    Object.assign(P, { y: GROUND, prevY: GROUND, vy: 0, grounded: true, sx: 1, sy: 1, inv: 0, canCut: false, phase: 0 });
+    Object.assign(P, { y: GROUND, prevY: GROUND, vy: 0, grounded: true, plat: null, sx: 1, sy: 1, inv: 0, canCut: false });
     this.pl.setPosition(PX, GROUND).setScale(1).setAlpha(1).setVisible(true);
-    // zone d'ombre de départ + premières sections
-    this.addShade(-300, 1100);
-    this.nextX = 800;
-    while (this.nextX < W + 800) this.nextX = this.spawnSection(this.nextX);
+    this.nextX = 900;
+    this.spawnAhead();
     this.cameras.main.setZoom(1);
     this.burnOverlay.setAlpha(0);
     sfx.setIntensity(0);
@@ -214,14 +237,13 @@ export class Game extends Phaser.Scene {
     sfx.startMusic();
     sfx.ui();
     this.hintT = 6;
-    this.hintText.setText('HOLD to jump higher - land on villagers!').setVisible(true).setAlpha(1);
+    this.hintText.setText('TAP = hop     HOLD = jump higher').setVisible(true).setAlpha(1);
   }
 
   // ---------------------------------------------------------------- génération
-  addShade(x, w) {
-    const c = Art.createShade(this, w);
-    c.x = x;
-    this.entities.shades.push({ x, w, c });
+  addShelter(x, w, top) {
+    const c = Art.createShelter(this, w).setPosition(x, top);
+    this.entities.shelters.push({ x, w, top, c });
   }
 
   spawnVillager(x, big) {
@@ -243,43 +265,70 @@ export class Game extends Phaser.Scene {
     this.entities.orbs.push({ c, x, baseY: y, ph: Math.random() * 6 });
   }
 
-  // une "section" = zone ensoleillée (avec contenu) + zone d'ombre
-  spawnSection(startX) {
-    const I = this.I || 0;
-    const gap = lerp(430, 1350, I) * rand(0.88, 1.12);
-    const shadeLen = lerp(760, 400, I) * rand(0.92, 1.1);
-    let c = startX + 170;
-    const end = startX + gap - 140;
-    while (c < end) {
-      const r = Math.random();
-      const garlicW = 0.12 + I * 0.2;
-      if (r < 0.42) {
-        this.spawnVillager(c, Math.random() < 0.28);
-        c += rand(280, 400);
-      } else if (r < 0.66) {
-        const n = pick([2, 2, 3]);
-        for (let i = 0; i < n; i++) { this.spawnVillager(c, Math.random() < 0.2); c += rand(330, 460); }
-      } else if (r < 0.66 + garlicW) {
-        const n = pick([1, 1, 2]);
-        for (let i = 0; i < n; i++) { this.spawnGarlic(c + i * 90, GROUND - rand(70, 190)); }
-        c += 90 * n + rand(210, 320);
+  // Remplit le monde devant le joueur. Le contenu dépend de la phase qu'il
+  // traversera quand il y arrivera (temps d'arrivée ~ distance / vitesse).
+  spawnAhead() {
+    let guard = 0;
+    while (this.nextX < W + 900 && guard++ < 60) {
+      const tAhead = Math.max(0, (this.nextX - PX) / this.speed);
+      const tt = this.t + tAhead;
+      const seg = this.cycle.at(tt);
+      const tr = seg.t1 - tt;
+
+      if (seg.type === 'night' && tr > DAWN_WARN + 1.1) { this.spawnNight(seg.n); continue; }
+
+      if (seg.type === 'night') {
+        // fin de nuit : un temps calme, puis les abris arrivent ~1 s avant le soleil
+        this.nextX = Math.max(this.nextX, PX + (seg.t1 - 1.2 - this.t) * this.speed);
+        this.spawnShelter(seg.n);
+      } else if (tr > 1.6) {
+        this.spawnShelter(seg.n);
       } else {
-        const n = 6, span = 280, hgt = rand(90, 170);
-        for (let i = 0; i < n; i++) {
-          const k = i / (n - 1);
-          this.spawnOrb(c + k * span, GROUND - 40 - Math.sin(k * Math.PI) * hgt);
-        }
-        c += span + 120;
+        // fin de journée : plus d'abris, on saute à la nuit suivante
+        this.nextX = Math.max(this.nextX, PX + (seg.t1 - this.t) * this.speed + 120);
       }
     }
-    const shadeX = startX + gap;
-    this.addShade(shadeX, shadeLen);
-    // quelques orbes dans l'ombre pour récompenser le repos
-    if (Math.random() < 0.6) {
-      for (let i = 0; i < 3; i++) this.spawnOrb(shadeX + shadeLen * 0.3 + i * 70, GROUND - 40);
+  }
+
+  // NUIT : villageois, ail, orbes
+  spawnNight(n) {
+    const c = this.nextX;
+    const garlicW = clamp(0.05 + 0.05 * (n - 1), 0, 0.3);
+    const r = Math.random();
+    if (r < 0.42) {
+      this.spawnVillager(c, Math.random() < 0.28);
+      this.nextX += rand(280, 400);
+    } else if (r < 0.7 - garlicW) {
+      const k = pick([2, 2, 3]);
+      let x = c;
+      for (let i = 0; i < k; i++) { this.spawnVillager(x, Math.random() < 0.2); x += rand(330, 460); }
+      this.nextX = x;
+    } else if (r < 0.7) {
+      const k = pick([1, 1, 2]);
+      for (let i = 0; i < k; i++) this.spawnGarlic(c + i * 90, GROUND - rand(70, 190));
+      this.nextX += 90 * k + rand(210, 320);
+    } else {
+      const k = 6, span = 280, hgt = rand(90, 170);
+      for (let i = 0; i < k; i++) {
+        const f = i / (k - 1);
+        this.spawnOrb(c + f * span, GROUND - 40 - Math.sin(f * Math.PI) * hgt);
+      }
+      this.nextX += span + 120;
     }
-    if (Math.random() < 0.3) this.spawnVillager(shadeX + shadeLen * 0.55, false);
-    return shadeX + shadeLen;
+  }
+
+  // JOUR : une plateforme d'ombre, de plus en plus courte et espacée
+  spawnShelter(n) {
+    const k = clamp((n - 1) / 7);
+    const L = lerp(520, 300, k) * rand(0.9, 1.1);
+    const G = lerp(160, 300, k) * rand(0.9, 1.1);
+    const top = clamp(this.lastTop + rand(-55, 55), GROUND - 175, GROUND - 95);
+    this.lastTop = top;
+    const x = this.nextX;
+    this.addShelter(x, L, top);
+    this.spawnOrb(x + L * 0.35, top - 45);
+    this.spawnOrb(x + L * 0.65, top - 45);
+    this.nextX += L + G;
   }
 
   // ================================================================ boucle
@@ -299,13 +348,13 @@ export class Game extends Phaser.Scene {
 
   // ---- écran titre : le vampire fait des petits sauts automatiques
   updateTitle(dt) {
-    this.I = 0.1;
+    this.D = 0;
     this.scrollWorld(150, dt);
     const P = this.P;
     if (P.grounded) { this.titleHop = (this.titleHop || 0) + dt; if (this.titleHop > 0.9) { this.titleHop = 0; P.vy = -560; P.grounded = false; P.sx = 0.8; P.sy = 1.3; } }
     P.vy += GRAVITY * dt; P.y += P.vy * dt;
     if (P.y >= GROUND) { P.y = GROUND; P.vy = 0; if (!P.grounded) { P.sx = 1.25; P.sy = 0.75; } P.grounded = true; }
-    this.drawPlayer(dt, 150, false);
+    this.drawPlayer(dt, false);
   }
 
   updateDead(dt) {
@@ -324,49 +373,105 @@ export class Game extends Phaser.Scene {
     }
   }
 
+  // ---- phases : NIGHT / DAWN (alerte) / DAY
+  updatePhase(dt) {
+    const seg = this.cycle.at(this.t);
+    this.seg = seg;
+    const tr = seg.t1 - this.t;
+    const el = this.t - seg.t0;
+    this.phase = seg.type === 'day' ? 'day' : (tr < DAWN_WARN ? 'dawn' : 'night');
+    if (this.phase !== this.prevPhase) { this.onPhase(this.prevPhase, this.phase, seg); this.prevPhase = this.phase; }
+
+    // "dayness" : pilote le ciel, l'astre et le sol
+    let target = 0;
+    if (seg.type === 'night') target = tr < DAWN_WARN ? 0.6 * (1 - tr / DAWN_WARN) : 0;
+    else if (tr < 1.2) target = tr / 1.2;
+    else target = el < 0.5 ? 0.6 + 0.4 * (el / 0.5) : 1;
+    this.D += (target - this.D) * Math.min(1, dt * 6);
+
+    this.n = seg.n;
+    this.speed = 400 + Math.min(seg.n - 1, 8) * 25;
+    this.burning = this.phase === 'day' && !this.onShelter;
+  }
+
+  onPhase(prev, next, seg) {
+    if (next === 'night') {
+      if (prev === null) {
+        this.showBanner('NIGHT 1', 'Land on villagers to bite them!', '#9fb3ff');
+      } else {
+        this.days += 1;
+        const b = 300 * this.days;
+        this.bonus += b;
+        sfx.night();
+        this.showBanner(`NIGHT ${seg.n}`, `Day ${this.days} survived!  +${b}`, '#9fb3ff');
+      }
+    } else if (next === 'dawn') {
+      sfx.dawn();
+      this.showBanner('DAWN!', 'Hop onto the blue platforms', '#ffb86b');
+      if (this.days === 0) {
+        this.hintT = 7;
+        this.hintText.setText('Stand ON the blue platforms to stay safe').setVisible(true).setAlpha(1);
+      }
+    } else if (next === 'day') {
+      this.cameras.main.flash(220, 255, 210, 120);
+      this.shakeAmt = Math.max(this.shakeAmt, 8);
+    }
+  }
+
+  showBanner(text, sub, color) {
+    this.bannerT = 2.2;
+    this.banner.setText(text).setColor(color).setVisible(true).setAlpha(1).setScale(1.5);
+    this.bannerSub.setText(sub).setVisible(true).setAlpha(1);
+    this.tweens.add({ targets: this.banner, scale: 1, duration: 240, ease: 'Back.out' });
+  }
+
   // ---- partie
   updatePlay(dt) {
     const P = this.P;
     this.t += dt;
-    this.I = clamp(this.t / 105);
-    this.speed = lerp(390, 720, clamp(this.t / 125));
+    this.updatePhase(dt);
     const speed = this.speed;
     this.dist += speed * dt;
-    sfx.setIntensity(this.I);
+    sfx.setIntensity(clamp(this.D * 0.6 + clamp((this.n - 1) / 6) * 0.4));
 
     this.scrollWorld(speed, dt);
     this.updateEntities(dt, speed);
 
-    // spawn
     this.nextX -= speed * dt;
-    while (this.nextX < W + 900) this.nextX = this.spawnSection(this.nextX);
+    this.spawnAhead();
 
-    // --- physique du vampire
+    // --- physique du vampire (sol + plateformes à sens unique)
     if (this.buffer > 0) this.buffer -= dt;
+    if (this.coyote > 0) this.coyote -= dt;
     P.prevY = P.y;
-    if (P.grounded && this.buffer > 0) this.jump();
+    if (this.buffer > 0 && (P.grounded || this.coyote > 0)) this.jump();
     const gmul = (P.vy < 0 && this.held) ? HOLD_GRAVITY : 1;
     P.vy += GRAVITY * gmul * dt;
     P.y += P.vy * dt;
-    if (P.y >= GROUND) {
-      P.y = GROUND;
-      if (!P.grounded) this.land();
-      P.vy = 0; P.grounded = true;
-    } else if (P.y < GROUND - 1) { P.grounded = false; }
-    if (P.inv > 0) P.inv -= dt;
 
-    // --- collisions
+    let floor = GROUND, plat = null;
+    if (P.vy >= 0) {
+      for (const s of this.entities.shelters) {
+        if (PX + HALF_W > s.x && PX - HALF_W < s.x + s.w && P.prevY <= s.top + 2 && P.y >= s.top && s.top < floor) { floor = s.top; plat = s; }
+      }
+    }
+    if (P.y >= floor) {
+      P.y = floor;
+      if (!P.grounded) this.land();
+      P.vy = 0; P.grounded = true; P.plat = plat;
+    } else {
+      if (P.grounded) this.coyote = COYOTE; // on vient de quitter le support en marchant
+      P.grounded = false; P.plat = null;
+    }
+    if (P.inv > 0) P.inv -= dt;
+    this.onShelter = !!P.plat;
+
     this.collide(dt);
 
-    // --- soleil / ombre
-    const inShade = this.entities.shades.some((z) => z.x <= PX && PX <= z.x + z.w);
-    this.inShade = inShade;
-    if (inShade) {
-      this.blood = Math.min(MAX_BLOOD, this.blood + 9 * dt);
-      this.smokeT = 0;
-      this.dustT += dt;
-    } else {
-      this.blood -= (8 + 30 * this.I) * dt;
+    // --- soleil : brûle le jour hors abri ; soigne sur une plateforme d'ombre
+    this.burning = this.phase === 'day' && !this.onShelter;
+    if (this.burning) {
+      this.blood -= Math.min(40, 12 + 3 * this.n) * dt;
       this.smokeT -= dt;
       if (this.smokeT <= 0) {
         this.smokeT = 0.045;
@@ -375,10 +480,10 @@ export class Game extends Phaser.Scene {
       }
       this.sizzleT = (this.sizzleT || 0) - dt;
       if (this.sizzleT <= 0) { this.sizzleT = 0.35; sfx.sizzle(); }
-    }
-    if (inShade && this.blood < MAX_BLOOD) {
+    } else if (this.phase === 'day' && this.onShelter) {
+      this.blood = Math.min(MAX_BLOOD, this.blood + HEAL_RATE * dt);
       this.healT = (this.healT || 0) - dt;
-      if (this.healT <= 0) {
+      if (this.blood < MAX_BLOOD && this.healT <= 0) {
         this.healT = 0.12;
         this.fx.spawn('circle', PX + rand(-24, 24), P.y - rand(5, 50), { vx: 0, vy: -90, life: 0.5, size: rand(5, 9), color: COLORS.fxHeal, alpha: 0.8 });
       }
@@ -388,25 +493,24 @@ export class Game extends Phaser.Scene {
     // traînée en l'air + poussière de course
     if (!P.grounded) {
       this.trailT -= dt;
-      if (this.trailT <= 0) { this.trailT = 0.035; this.fx.spawn('square', PX - 8, P.y - 28, { life: 0.28, size: 40, color: 0x8d1b2f, alpha: 0.35, depth: 14 }); }
+      if (this.trailT <= 0) { this.trailT = 0.035; this.fx.spawn('square', PX - 8, P.y - 28, { life: 0.28, size: 40, color: COLORS.player, alpha: 0.3, depth: 14 }); }
     } else {
       this.dustT -= dt;
-      if (this.dustT <= 0) { this.dustT = 0.07; this.fx.spawn('circle', PX - 18, GROUND - 4, { vx: -speed * 0.5, vy: rand(-90, -20), life: 0.35, size: rand(6, 12), color: COLORS.fxDust, alpha: 0.6 }); }
+      if (this.dustT <= 0) { this.dustT = 0.07; this.fx.spawn('circle', PX - 18, P.y - 4, { vx: -speed * 0.5, vy: rand(-90, -20), life: 0.35, size: rand(6, 12), color: COLORS.fxDust, alpha: 0.6 }); }
     }
 
-    this.drawPlayer(dt, speed, true);
+    this.drawPlayer(dt, true);
     this.updateHud(dt);
 
-    // aube + mort
     if (this.blood <= 0) this.die();
   }
 
   jump() {
     const P = this.P;
-    P.vy = -JUMP_V; P.grounded = false; P.canCut = true; this.buffer = 0;
+    P.vy = -JUMP_V; P.grounded = false; P.plat = null; P.canCut = true; this.buffer = 0; this.coyote = 0;
     P.sx = 0.78; P.sy = 1.3;
     sfx.jump();
-    this.fx.burst('circle', PX, GROUND - 2, 6, { speed: 160, spread: 1.6, angle: -Math.PI / 2, life: 0.3, size: 8, color: COLORS.fxDust, alpha: 0.7, g: 400 });
+    this.fx.burst('circle', PX, P.y - 2, 6, { speed: 160, spread: 1.6, angle: -Math.PI / 2, life: 0.3, size: 8, color: COLORS.fxDust, alpha: 0.7, g: 400 });
   }
 
   land() {
@@ -418,14 +522,14 @@ export class Game extends Phaser.Scene {
     this.chainText.setVisible(false);
     sfx.land();
     if (hard) this.shakeAmt = Math.max(this.shakeAmt, 5);
-    this.fx.burst('circle', PX, GROUND - 3, hard ? 12 : 7, { speed: 260, spread: 2.4, angle: -Math.PI / 2, life: 0.4, size: hard ? 12 : 9, color: COLORS.fxDust, alpha: 0.75, g: 500 });
+    this.fx.burst('circle', PX, P.y - 3, hard ? 12 : 7, { speed: 260, spread: 2.4, angle: -Math.PI / 2, life: 0.4, size: hard ? 12 : 9, color: COLORS.fxDust, alpha: 0.75, g: 500 });
   }
 
   bounce(v) {
     const P = this.P;
     const holdBonus = this.held || this.buffer > 0 ? BOUNCE_HOLD_V : BOUNCE_V;
     P.vy = -(holdBonus + (v.big ? 70 : 0) + Math.min(this.chain, 5) * 18);
-    P.grounded = false; P.canCut = false; this.buffer = 0;
+    P.grounded = false; P.plat = null; P.canCut = false; this.buffer = 0;
     P.sx = 0.7; P.sy = 1.4;
   }
 
@@ -452,7 +556,7 @@ export class Game extends Phaser.Scene {
       const nx = clamp(gx, PX - 22, PX + 22), ny = clamp(gy, top + 4, feet - 4);
       if ((gx - nx) ** 2 + (gy - ny) ** 2 < (g.r - 3) ** 2) {
         g.gone = true;
-        this.fx.burst('circle', gx, gy, 10, { speed: 320, life: 0.5, size: 10, color: 0xdff2b0 });
+        this.fx.burst('circle', gx, gy, 10, { speed: 320, life: 0.5, size: 10, color: COLORS.garlic });
         g.c.setVisible(false);
         if (P.inv <= 0) this.hurt(18, gx, 'GARLIC!');
       }
@@ -490,7 +594,7 @@ export class Game extends Phaser.Scene {
     this.shakeAmt = Math.max(this.shakeAmt, 7 + this.chain);
     sfx.bite(this.chain);
     // juice
-    this.fx.burst('circle', v.x, v.c.y - v.top + GROUND - 20, 18, { speed: 460, spread: 3.2, angle: -Math.PI / 2, life: 0.7, size: 12, color: COLORS.fxBlood, g: 1400 });
+    this.fx.burst('circle', v.x, GROUND - v.h, 18, { speed: 460, spread: 3.2, angle: -Math.PI / 2, life: 0.7, size: 12, color: COLORS.fxBlood, g: 1400 });
     this.fx.burst('square', v.x, GROUND - 30, 8, { speed: 300, life: 0.5, size: 10, color: v.big ? COLORS.villagerBig : COLORS.villager, g: 900, spin: 8 });
     this.fx.spawn('circle', v.x, GROUND - 30, { life: 0.25, size: 120, color: 0xffffff, alpha: 0.6, shrink: false });
     this.popup(v.x, GROUND - v.h - 10, `+${pts}`, '#ffd166', 34 + this.chain * 3);
@@ -509,7 +613,7 @@ export class Game extends Phaser.Scene {
     const P = this.P;
     this.blood = Math.max(0, this.blood - dmg);
     P.inv = 0.9;
-    P.vy = Math.min(P.vy, -380); P.grounded = false; P.canCut = false;
+    P.vy = Math.min(P.vy, -380); P.grounded = false; P.plat = null; P.canCut = false;
     P.sx = 1.3; P.sy = 0.8;
     this.chain = 0; this.chainText.setVisible(false);
     this.hitstop = 0.08;
@@ -539,13 +643,13 @@ export class Game extends Phaser.Scene {
     if (isBest) { this.best = score; saveBest(score); }
     this.deadScore.setText(`SCORE  ${score}`);
     this.deadBest.setText(isBest ? 'NEW BEST!' : `BEST  ${this.best}`).setColor(isBest ? '#ffd166' : '#cccccc');
-    this.deadStats.setText(`${this.bites} bites     best chain x${this.maxChain}     ${(this.dist / 100) | 0} m`);
+    this.deadStats.setText(`${this.days} day${this.days === 1 ? '' : 's'} survived     ${this.bites} bites     best chain x${this.maxChain}`);
     this.deadGroup.forEach((o) => o.setVisible(false));
     this.hud.forEach((o) => { if (o !== this.scoreText && o !== this.bestText) o.setVisible(false); });
     this.burnOverlay.setAlpha(0.25);
   }
 
-  score() { return ((this.dist / 40) | 0) + this.bonus; }
+  score() { return ((this.dist / 80) | 0) + this.bonus; }
 
   popup(x, y, str, color, size) {
     const t = this.txt(x, y, str, size, color, { depth: 35 });
@@ -559,8 +663,8 @@ export class Game extends Phaser.Scene {
     const E = this.entities;
     const rm = (arr, fn) => { for (let i = arr.length - 1; i >= 0; i--) { if (fn(arr[i])) { arr[i].c.destroy(); arr.splice(i, 1); } } };
 
-    for (const z of E.shades) { z.x -= speed * dt; z.c.x = z.x; }
-    rm(E.shades, (z) => z.x + z.w < -80);
+    for (const s of E.shelters) { s.x -= speed * dt; s.c.x = s.x; }
+    rm(E.shelters, (s) => s.x + s.w < -80);
 
     for (const v of E.villagers) {
       v.x -= (speed + v.walk) * dt;
@@ -582,18 +686,19 @@ export class Game extends Phaser.Scene {
   }
 
   // ---------------------------------------------------------------- rendu
-  drawPlayer(dt, speed, playing) {
+  drawPlayer(dt, playing) {
     const P = this.P, pl = this.pl;
     P.sx += (1 - P.sx) * Math.min(1, dt * 14);
     P.sy += (1 - P.sy) * Math.min(1, dt * 14);
     pl.setPosition(PX, P.y).setScale(P.sx, P.sy);
     if (playing) {
       pl.setAlpha(P.inv > 0 && Math.sin(this.t * 60) > 0 ? 0.25 : 1); // clignote si invulnérable
-      this.plArt.setBurning(!this.inShade && Math.sin(this.t * 40) > 0);
+      this.plArt.setBurning(this.burning && Math.sin(this.t * 40) > 0);
     }
   }
 
   updateHud(dt) {
+    // sang
     const pct = this.blood / MAX_BLOOD;
     this.barFill.setDisplaySize(Math.max(0.01, this.barW * pct), 24);
     const low = pct < 0.3;
@@ -602,22 +707,41 @@ export class Game extends Phaser.Scene {
     this.barLabel.setScale(low ? 1 + Math.sin(this.t * 14) * 0.06 : 1);
     this.scoreText.setText(String(this.score()));
     this.bestText.setText(this.best ? `BEST ${this.best}` : '');
-    // voile rouge : plus il reste peu de sang et plus on est au soleil
+
+    // phase : nom + barre de temps restant
+    const seg = this.seg, tr = Math.max(0, seg.t1 - this.t);
+    let label, color, fill;
+    if (this.phase === 'night') { label = `NIGHT ${seg.n}`; color = '#9fb3ff'; fill = 0x6c8cff; }
+    else if (this.phase === 'dawn') {
+      label = `DAWN IN ${Math.ceil(tr)}`; color = Math.sin(this.t * 14) > 0 ? '#ffb86b' : '#ffffff'; fill = 0xffb86b;
+    } else { label = `DAY ${seg.n}  -  HIDE!`; color = '#ffd166'; fill = 0xffd166; }
+    this.phLabel.setText(label).setColor(color);
+    const total = seg.t1 - seg.t0;
+    this.phFill.setDisplaySize(Math.max(0.01, this.phW * (tr / total)), 14).setFillStyle(fill);
+
+    // voile rouge : brûlure + sang bas
     let a = 0;
-    if (!this.inShade) a = 0.04 + 0.13 * (1 - pct) + 0.05 * this.I;
+    if (this.burning) a = 0.05 + 0.13 * (1 - pct);
     if (low) a += 0.08 + Math.sin(this.t * 12) * 0.05;
     if (this.hurtFlash > 0) { this.hurtFlash -= dt; a += 0.2; }
     this.burnOverlay.setAlpha(clamp(a, 0, 0.5));
+
     if (this.hintT > 0) {
       this.hintT -= dt;
       if (this.hintT < 1.2) this.hintText.setAlpha(clamp(this.hintT / 1.2));
       if (this.hintT <= 0) this.hintText.setVisible(false);
     }
+    if (this.bannerT > 0) {
+      this.bannerT -= dt;
+      const al = clamp(this.bannerT / 0.6);
+      this.banner.setAlpha(al); this.bannerSub.setAlpha(al);
+      if (this.bannerT <= 0) { this.banner.setVisible(false); this.bannerSub.setVisible(false); }
+    }
     if (this.chain < 2) this.chainText.setVisible(false);
   }
 
   // décor (voir art.js)
-  scrollWorld(speed, dt) { this.bg.update(this.I, speed, dt); }
+  scrollWorld(speed, dt) { this.bg.update(this.D, speed, dt); }
 
   updateShake(dt) {
     const cam = this.cameras.main;

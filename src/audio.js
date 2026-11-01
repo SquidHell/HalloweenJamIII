@@ -99,6 +99,8 @@ class Sfx {
     this.noise(0.9, { vol: 0.35, lp: 2500 });
     this.tone(300, 0.9, { type: 'sawtooth', to: 30, vol: 0.25 });
   }
+  dawn() { this.tone(300, 0.9, { type: 'sawtooth', to: 900, vol: 0.12 }); this.tone(450, 0.9, { type: 'square', to: 1350, vol: 0.05, delay: 0.05 }); }
+  night() { this.tone(520, 0.6, { type: 'triangle', to: 260, vol: 0.2 }); this.tone(390, 0.6, { type: 'triangle', to: 195, vol: 0.14, delay: 0.08 }); }
   ui() { this.tone(520, 0.08, { type: 'square', vol: 0.1 }); this.tone(780, 0.1, { type: 'square', vol: 0.1, delay: 0.06 }); }
 
   // --- Musique procédurale (la, mineur) ---
