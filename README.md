@@ -20,7 +20,8 @@ npm run build    # outputs dist/
 Add `?debug` to the URL to expose the scene as `window.__bb` in the console.
 
 ## Structure
-- `src/scenes/Game.js` - the whole game (title, run, death) - squares and circles only
+- `src/art.js` - **all visuals live here** (placeholder squares/circles). Reskin later by editing the `create*()` functions + `COLORS`/`DIMS`, no gameplay change needed
+- `src/scenes/Game.js` - gameplay (title, run, death, collisions, spawning)
 - `src/fx.js` - particle pool - `src/audio.js` - procedural WebAudio sfx + music (no assets)
 - `src/font.js` - loads the Waelek font from `public/fonts/` (falls back to a system font if missing)
 
