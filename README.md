@@ -7,10 +7,11 @@ Phaser 4 + Vite, 100% web, mobile-friendly (landscape).
 
 ## How to play
 **The loop = a night/day cycle you read at a glance** (phase name + timer bar at the top, moon/sun in the sky, sky color).
-- **NIGHT - you come out.** No sun. Villagers fill the street: **land on them** to bite, refill blood and bounce. Chain bites in the air for big combos. Avoid the garlic.
-- **DAWN (3.5 s warning).** The sky turns orange, a countdown shows, blue shadow platforms scroll in.
-- **DAY - hide.** The sun burns you everywhere except **standing on a blue shadow platform** (it also heals you). Hop from platform to platform. Villagers are indoors.
-- Survive the day = bonus, then the next night starts. Each cycle is harder (shorter nights, longer days, smaller platforms, hotter sun).
+- You **start the first night with your BLOOD at 1/3** (the bar flashes "fill it up"). A small **sun marker** on the bar shows the blood you want before dawn.
+- **NIGHT - you come out.** No sun. Villagers fill the street: **land on them** to bite, refill blood and bounce. Chain bites in the air for combos. Golden orbs at the top of orb arcs give extra blood. Avoid the garlic (green).
+- **DAWN (3.5 s warning).** The sky turns orange, a countdown shows, dark shadow zones scroll in.
+- **DAY - hide.** The world is lit and the sun burns you everywhere **except inside the dark shadow zones** (they heal you). Hop from zone to zone. Golden orbs float above the sunlit gaps: more blood, but you burn to get them.
+- Survive the day = bonus, then the next night starts. Each cycle is harder (shorter nights, longer days, smaller zones, hotter sun).
 - **Controls:** tap / click / Space = hop. **Hold** = jump higher. Hold on landing = higher bounce.
 
 ## Dev

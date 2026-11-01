@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { W, H, GROUND, PX, FONT, clamp, lerp, rand, pick, lerpColor } from '../config.js';
 import { Fx } from '../fx.js';
 import { sfx } from '../audio.js';
-import { Cycle, DAWN_WARN } from '../cycle.js';
+import { Cycle, DAWN_WARN, dayLen } from '../cycle.js';
 import * as Art from '../art.js';
 const { COLORS, DIMS } = Art;
 
@@ -16,9 +16,15 @@ const BOUNCE_HOLD_V = 880;    // rebond en maintenant
 const BUFFER = 0.13;          // buffer d'input
 const COYOTE = 0.1;           // saut toléré juste après avoir quitté une plateforme
 const MAX_BLOOD = 100;
-const HEAL_RATE = 9;          // sang/s récupéré sur une plateforme d'ombre
+const START_BLOOD = 33;       // on commence la nuit à 1/3 : il faut la remplir en mordant
+const DRAIN_BASE = 12;        // brûlure du soleil (sang/s) = DRAIN_BASE + 3 * jour
+const HEAL_RATE = 9;          // sang/s récupéré dans une zone d'ombre
 const BEST_KEY = 'bb_best';
 const HALF_W = 22;            // demi-largeur de support du vampire
+
+// sang conseillé au lever du soleil (repère affiché sur la jauge)
+const drainRate = (n) => Math.min(40, DRAIN_BASE + 3 * n);
+const needBlood = (n) => Math.min(95, drainRate(n) * dayLen(n) * 0.45);
 
 function loadBest() { try { return +localStorage.getItem(BEST_KEY) || 0; } catch (e) { return 0; } }
 function saveBest(v) { try { localStorage.setItem(BEST_KEY, String(v)); } catch (e) { /* ignore */ } }
@@ -93,6 +99,10 @@ export class Game extends Phaser.Scene {
     this.barBg = this.box(barX - 2, barY, barW + 4, 30, 0x120a22, 0.9).setOrigin(0, 0.5).setDepth(d);
     this.barFill = this.box(barX, barY, barW, 24, 0xd1203b).setOrigin(0, 0.5).setDepth(d + 1);
     this.barLabel = this.txt(barX, barY - 34, 'BLOOD', 22, '#ff8fa3', { ox: 0 });
+    // repère "sang conseillé pour survivre au jour" (petit soleil + trait)
+    this.barX = barX;
+    this.needTick = this.box(barX, barY, 4, 40, 0xffd166).setDepth(d + 2);
+    this.needSun = this.dot(barX, barY - 28, 9, 0xffd166).setDepth(d + 2);
     // phase (haut centre) : nom + temps restant avant le changement
     const pw = 330, px = W / 2 - pw / 2, py = 66;
     this.phW = pw;
@@ -106,10 +116,10 @@ export class Game extends Phaser.Scene {
     this.bestText = this.txt(W - 44, 88, '', 22, '#cccccc', { ox: 1 });
     // annonces
     this.chainText = this.txt(W / 2, 150, '', 54, '#ffd166').setVisible(false);
-    this.hintText = this.txt(W / 2, 560, '', 30, '#ffffff').setVisible(false);
+    this.hintText = this.txt(W / 2, 440, '', 30, '#ffffff').setVisible(false);
     this.banner = this.txt(W / 2, 260, '', 84, '#ffffff', { depth: 42, style: { strokeThickness: 10 } }).setVisible(false);
     this.bannerSub = this.txt(W / 2, 335, '', 32, '#ffffff', { depth: 42 }).setVisible(false);
-    this.hud.push(this.barBorder, this.barBg, this.barFill, this.barLabel, this.phLabel, this.phBorder, this.phBg, this.phFill,
+    this.hud.push(this.barBorder, this.barBg, this.barFill, this.barLabel, this.needTick, this.needSun, this.phLabel, this.phBorder, this.phBg, this.phFill,
       this.scoreText, this.bestText, this.chainText, this.hintText, this.banner, this.bannerSub);
   }
 
@@ -117,7 +127,7 @@ export class Game extends Phaser.Scene {
     const d = 45;
     this.titleGroup = [];
     const t1 = this.txt(W / 2, 200, 'BITE & BOUNCE', 96, '#ffffff', { depth: d });
-    const sub = this.txt(W / 2, 330, 'NIGHT: you come out. Land on villagers to bite and bounce!\nDAWN: hide. Hop onto the blue shadow platforms!', 28, '#dddddd', { depth: d });
+    const sub = this.txt(W / 2, 330, 'NIGHT: you come out. Land on villagers to bite them and fill your blood.\nDAY: the sun burns. Hide inside the dark shadows!', 28, '#dddddd', { depth: d });
     this.startText = this.txt(W / 2, 480, 'TAP  /  SPACE  TO  START', 40, '#ffffff', { depth: d });
     this.tweens.add({ targets: this.startText, alpha: 0.25, duration: 520, yoyo: true, repeat: -1 });
     this.howText = this.txt(W / 2, 540, 'TAP = HOP     HOLD = JUMP HIGHER', 24, '#ffffff', { depth: d });
@@ -215,7 +225,7 @@ export class Game extends Phaser.Scene {
     this.t = 0; this.speed = 400; this.D = 0; this.n = 1;
     this.phase = 'night'; this.prevPhase = null; this.seg = this.cycle.at(0);
     this.days = 0;
-    this.blood = MAX_BLOOD; this.bonus = 0; this.dist = 0;
+    this.blood = START_BLOOD; this.bonus = 0; this.dist = 0;
     this.chain = 0; this.maxChain = 0; this.bites = 0;
     this.buffer = 0; this.coyote = 0; this.smokeT = 0; this.trailT = 0; this.dustT = 0; this.hurtFlash = 0;
     this.bannerT = 0; this.hintT = 0; this.burning = false; this.onShelter = false;
@@ -237,7 +247,7 @@ export class Game extends Phaser.Scene {
     sfx.startMusic();
     sfx.ui();
     this.hintT = 6;
-    this.hintText.setText('TAP = hop     HOLD = jump higher').setVisible(true).setAlpha(1);
+    this.hintText.setText('Your BLOOD is low!  Land on villagers to bite them.\nTAP = hop     HOLD = jump higher').setVisible(true).setAlpha(1);
   }
 
   // ---------------------------------------------------------------- génération
@@ -260,9 +270,9 @@ export class Game extends Phaser.Scene {
     this.entities.garlics.push({ c, x, baseY: y, ph: Math.random() * 6, r: DIMS.garlicRadius });
   }
 
-  spawnOrb(x, y) {
-    const c = Art.createOrb(this).setPosition(x, y);
-    this.entities.orbs.push({ c, x, baseY: y, ph: Math.random() * 6 });
+  spawnOrb(x, y, gold = false) {
+    const c = Art.createOrb(this, gold).setPosition(x, y);
+    this.entities.orbs.push({ c, x, baseY: y, ph: Math.random() * 6, gold });
   }
 
   // Remplit le monde devant le joueur. Le contenu dépend de la phase qu'il
@@ -293,11 +303,11 @@ export class Game extends Phaser.Scene {
   // NUIT : villageois, ail, orbes
   spawnNight(n) {
     const c = this.nextX;
-    const garlicW = clamp(0.05 + 0.05 * (n - 1), 0, 0.3);
+    const garlicW = n < 2 ? 0 : clamp(0.06 * (n - 1), 0, 0.3); // pas d'ail la 1re nuit
     const r = Math.random();
     if (r < 0.42) {
       this.spawnVillager(c, Math.random() < 0.28);
-      this.nextX += rand(280, 400);
+      this.nextX += n < 2 ? rand(340, 470) : rand(280, 400);
     } else if (r < 0.7 - garlicW) {
       const k = pick([2, 2, 3]);
       let x = c;
@@ -308,16 +318,16 @@ export class Game extends Phaser.Scene {
       for (let i = 0; i < k; i++) this.spawnGarlic(c + i * 90, GROUND - rand(70, 190));
       this.nextX += 90 * k + rand(210, 320);
     } else {
-      const k = 6, span = 280, hgt = rand(90, 170);
+      const k = 5, span = 280, hgt = rand(90, 170);
       for (let i = 0; i < k; i++) {
         const f = i / (k - 1);
-        this.spawnOrb(c + f * span, GROUND - 40 - Math.sin(f * Math.PI) * hgt);
+        this.spawnOrb(c + f * span, GROUND - 40 - Math.sin(f * Math.PI) * hgt, i === 2); // sommet = orbe dorée
       }
       this.nextX += span + 120;
     }
   }
 
-  // JOUR : une plateforme d'ombre, de plus en plus courte et espacée
+  // JOUR : une zone d'ombre (sur un sol), de plus en plus courte et espacée
   spawnShelter(n) {
     const k = clamp((n - 1) / 7);
     const L = lerp(520, 300, k) * rand(0.9, 1.1);
@@ -328,6 +338,8 @@ export class Game extends Phaser.Scene {
     this.addShelter(x, L, top);
     this.spawnOrb(x + L * 0.35, top - 45);
     this.spawnOrb(x + L * 0.65, top - 45);
+    // orbe dorée au-dessus du vide ensoleillé : plus de sang, mais on s'expose
+    this.spawnOrb(x + L + G / 2, top - 150, true);
     this.nextX += L + G;
   }
 
@@ -397,7 +409,7 @@ export class Game extends Phaser.Scene {
   onPhase(prev, next, seg) {
     if (next === 'night') {
       if (prev === null) {
-        this.showBanner('NIGHT 1', 'Land on villagers to bite them!', '#9fb3ff');
+        this.showBanner('NIGHT 1', 'Bite villagers to fill your blood', '#9fb3ff');
       } else {
         this.days += 1;
         const b = 300 * this.days;
@@ -407,10 +419,10 @@ export class Game extends Phaser.Scene {
       }
     } else if (next === 'dawn') {
       sfx.dawn();
-      this.showBanner('DAWN!', 'Hop onto the blue platforms', '#ffb86b');
+      this.showBanner('DAWN!', 'Get ready to hide in the dark shadows', '#ffb86b');
       if (this.days === 0) {
         this.hintT = 7;
-        this.hintText.setText('Stand ON the blue platforms to stay safe').setVisible(true).setAlpha(1);
+        this.hintText.setText('Stay INSIDE the dark shadows: the sun burns everywhere else').setVisible(true).setAlpha(1);
       }
     } else if (next === 'day') {
       this.cameras.main.flash(220, 255, 210, 120);
@@ -464,14 +476,16 @@ export class Game extends Phaser.Scene {
       P.grounded = false; P.plat = null;
     }
     if (P.inv > 0) P.inv -= dt;
-    this.onShelter = !!P.plat;
+    // à l'abri = dans le volume sombre (largeur de la zone, corps entièrement sous son plafond)
+    this.onShelter = this.entities.shelters.some((s) =>
+      PX >= s.x + 6 && PX <= s.x + s.w - 6 && P.y <= s.top + 2 && P.y - 50 >= s.top - DIMS.zoneH);
 
     this.collide(dt);
 
-    // --- soleil : brûle le jour hors abri ; soigne sur une plateforme d'ombre
+    // --- soleil : brûle le jour hors abri ; soigne dans une zone d'ombre
     this.burning = this.phase === 'day' && !this.onShelter;
     if (this.burning) {
-      this.blood -= Math.min(40, 12 + 3 * this.n) * dt;
+      this.blood -= drainRate(this.n) * dt;
       this.smokeT -= dt;
       if (this.smokeT <= 0) {
         this.smokeT = 0.045;
@@ -547,7 +561,7 @@ export class Game extends Phaser.Scene {
         this.biteVillager(v);
       } else if (!v.hit && feet > v.top + 24 && top < GROUND && dx < 24 + v.w / 2 - 2) {
         v.hit = true;
-        if (P.inv <= 0) this.hurt(9, v.x, 'WHACK!');
+        if (P.inv <= 0) this.hurt(4, v.x, 'WHACK!');
       }
     }
     for (const g of E.garlics) {
@@ -572,10 +586,11 @@ export class Game extends Phaser.Scene {
       }
       if (d2 < 40 * 40) {
         o.gone = true; o.c.setVisible(false);
-        this.blood = Math.min(MAX_BLOOD, this.blood + 2.5);
-        this.bonus += 10;
+        this.blood = Math.min(MAX_BLOOD, this.blood + (o.gold ? 10 : 2.5));
+        this.bonus += o.gold ? 50 : 10;
         sfx.orb();
-        this.fx.burst('circle', o.x, o.c.y, 5, { speed: 200, life: 0.35, size: 7, color: COLORS.orb });
+        this.fx.burst('circle', o.x, o.c.y, o.gold ? 9 : 5, { speed: o.gold ? 300 : 200, life: 0.4, size: o.gold ? 9 : 7, color: o.gold ? COLORS.orbGold : COLORS.orb });
+        if (o.gold) this.popup(o.x, o.c.y - 20, '+10 BLOOD', '#ffd166', 28);
       }
     }
   }
@@ -693,7 +708,7 @@ export class Game extends Phaser.Scene {
     pl.setPosition(PX, P.y).setScale(P.sx, P.sy);
     if (playing) {
       pl.setAlpha(P.inv > 0 && Math.sin(this.t * 60) > 0 ? 0.25 : 1); // clignote si invulnérable
-      this.plArt.setBurning(this.burning && Math.sin(this.t * 40) > 0);
+      this.plArt.setLook(this.burning && Math.sin(this.t * 40) > 0, this.phase === 'day' && this.onShelter);
     }
   }
 
@@ -703,8 +718,15 @@ export class Game extends Phaser.Scene {
     this.barFill.setDisplaySize(Math.max(0.01, this.barW * pct), 24);
     const low = pct < 0.3;
     this.barFill.setFillStyle(low ? (Math.sin(this.t * 14) > 0 ? 0xff5c3a : 0xd1203b) : lerpColor(0xd1203b, 0xff3b5c, pct));
-    this.barBorder.setFillStyle(low ? 0xff5c3a : 0xffffff);
+    if (!(this.days === 0 && this.t < 6)) this.barBorder.setFillStyle(low ? 0xff5c3a : 0xffffff);
     this.barLabel.setScale(low ? 1 + Math.sin(this.t * 14) * 0.06 : 1);
+    // repère de sang conseillé pour le jour à venir
+    const nx = this.barX + this.barW * (needBlood(this.seg.n) / MAX_BLOOD);
+    this.needTick.setX(nx); this.needSun.setX(nx);
+    // au tout début : la jauge clignote pour dire "remplis-moi"
+    const intro = this.days === 0 && this.t < 6;
+    this.barLabel.setText(intro ? 'BLOOD - FILL IT UP!' : 'BLOOD');
+    if (intro) this.barBorder.setFillStyle(Math.sin(this.t * 10) > 0 ? 0xffd166 : 0xffffff);
     this.scoreText.setText(String(this.score()));
     this.bestText.setText(this.best ? `BEST ${this.best}` : '');
 

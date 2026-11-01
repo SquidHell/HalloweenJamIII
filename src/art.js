@@ -11,25 +11,27 @@ import Phaser from 'phaser';
 // ---- Palette (à changer en un seul endroit)
 export const COLORS = {
   skyNight: 0x1b1b2f,
-  skyDay: 0xf0a24d,
+  skyDay: 0xffbf5f,
   moon: 0xdfe6ff,
-  sun: 0xfff0a8,
+  sun: 0xfff7c2,
   ground: 0x3d3d52,
-  groundDay: 0xc8a165,
+  groundDay: 0xe6c98a,
   groundLine: 0x8888a8,
-  groundLineDay: 0xefd9a0,
-  shelterTop: 0x4cc9f0,   // surface sûre (cyan = "ici on est à l'ombre")
-  shelter: 0x1d3557,
+  groundLineDay: 0xfff2c4,
+  shadow: 0x0a0a1f,       // zone d'ombre : sombre = pas éclairé = sûr
+  shadowFloor: 0x05050f,
   player: 0x9b5de5,
   playerBurn: 0xff7a1a,
+  playerShade: 0x6a3fb0,  // vampire dans l'ombre
   villager: 0xf4a261,
   villagerBig: 0xe76f51,
-  garlic: 0xdde5b6,
+  garlic: 0x8ac926,       // vert = danger
+  orbGold: 0xffd166,
   orb: 0xe63946,
   fxBlood: 0xe63946,
   fxSmoke: 0x888888,
   fxEmber: 0xff7a1a,
-  fxHeal: 0x4cc9f0,
+  fxHeal: 0x9fb3ff,
   fxDust: 0x8888a8,
   burnOverlay: 0xff3b1f,
 };
@@ -41,6 +43,8 @@ export const DIMS = {
   villagerBig: { w: 52, h: 96 },
   garlicRadius: 22,
   orbRadius: 11,
+  orbGoldRadius: 15,
+  zoneH: 170,             // hauteur de la zone d'ombre au-dessus du sol de la plateforme
 };
 
 // ---------------------------------------------------------------------------
@@ -99,7 +103,7 @@ export function createBackground(scene) {
 
 // ---------------------------------------------------------------------------
 //  Vampire : un carré. Origine du conteneur = pieds, centre-bas.
-//  Game.js applique squash/stretch sur le conteneur et appelle setBurning().
+//  Game.js applique squash/stretch sur le conteneur et appelle setLook(burning, shaded).
 // ---------------------------------------------------------------------------
 export function createPlayer(scene) {
   const { w, h } = DIMS.player;
@@ -107,7 +111,8 @@ export function createPlayer(scene) {
   const c = scene.add.container(0, 0, [body]).setDepth(15);
   return {
     c,
-    setBurning(on) { body.setFillStyle(on ? COLORS.playerBurn : COLORS.player); },
+    // burning : clignote orange au soleil ; shaded : plus sombre dans une zone d'ombre
+    setLook(burning, shaded) { body.setFillStyle(burning ? COLORS.playerBurn : shaded ? COLORS.playerShade : COLORS.player); },
   };
 }
 
@@ -129,19 +134,23 @@ export function createGarlic(scene) {
 }
 
 // ---------------------------------------------------------------------------
-//  Orbe de sang (bonus) : un petit rond. Origine = centre.
+//  Orbe de sang (bonus) : un petit rond rouge ; doré = plus gros, plus de sang.
+//  Origine = centre.
 // ---------------------------------------------------------------------------
-export function createOrb(scene) {
-  return scene.add.container(0, 0, [dot(scene, 0, 0, DIMS.orbRadius, COLORS.orb)]).setDepth(13);
+export function createOrb(scene, gold = false) {
+  if (!gold) return scene.add.container(0, 0, [dot(scene, 0, 0, DIMS.orbRadius, COLORS.orb)]).setDepth(13);
+  // doré = noyau or + anneau rouge (reste lisible sur le ciel orange du jour)
+  const r = DIMS.orbGoldRadius;
+  return scene.add.container(0, 0, [dot(scene, 0, 0, r + 5, COLORS.orb), dot(scene, 0, 0, r - 2, COLORS.orbGold)]).setDepth(13);
 }
 
 // ---------------------------------------------------------------------------
-//  Plateforme d'ombre (abri du jour) : une barre sombre avec un dessus cyan.
-//  Origine du conteneur = coin haut-gauche (le dessus = surface où l'on se tient).
-//  Hitbox : largeur w, le dessus à y = 0.
+//  Zone d'ombre (abri du jour) : un volume SOMBRE (= pas éclairé) posé sur un sol.
+//  Origine du conteneur = coin gauche au niveau du sol de la zone (y = 0).
+//  Le vampire est à l'abri quand il est DANS le volume (largeur w, hauteur DIMS.zoneH).
 // ---------------------------------------------------------------------------
 export function createShelter(scene, w) {
-  const top = box(scene, w / 2, 6, w, 12, COLORS.shelterTop);
-  const body = box(scene, w / 2, 12 + 14, w, 28, COLORS.shelter);
-  return scene.add.container(0, 0, [body, top]).setDepth(9);
+  const vol = box(scene, w / 2, -DIMS.zoneH / 2, w, DIMS.zoneH, COLORS.shadow, 0.9);
+  const floor = box(scene, w / 2, 14, w, 28, COLORS.shadowFloor);
+  return scene.add.container(0, 0, [vol, floor]).setDepth(9);
 }
